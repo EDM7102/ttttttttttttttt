@@ -596,13 +596,83 @@ def shop_item(key: str, qty: float) -> dict:
     }
 
 
-def meal_to_data(meal: dict) -> dict:
+HAUPTMAHLZEITEN = ("Frühstück", "Mittagessen", "Abendessen")
+
+WASSER = {
+    "einheit": "liter",
+    "getraenk": "Wasser (ungesüßt; Kaffee/Tee ohne Zucker zählen nicht als Ersatz für die Liter)",
+    "regeln": [
+        {
+            "id": "nach_aufstehen",
+            "wann": "Direkt nach dem Aufstehen",
+            "menge_l": 0.5,
+            "text": "Direkt nach dem Aufstehen: 0,5 Liter",
+        },
+        {
+            "id": "hauptmahlzeit",
+            "wann": "Zu jeder Hauptmahlzeit",
+            "menge_l": 0.5,
+            "hauptmahlzeiten": list(HAUPTMAHLZEITEN),
+            "anzahl_pro_tag": 3,
+            "summe_l": 1.5,
+            "text": "Zu jeder Hauptmahlzeit: 0,5 Liter (Frühstück, Mittagessen, Abendessen)",
+        },
+        {
+            "id": "training",
+            "wann": "Während des Trainings",
+            "menge_l": 1.0,
+            "optional": True,
+            "text": "Während des Trainings: 1 Liter",
+        },
+        {
+            "id": "rest_des_tages",
+            "wann": "Über den Rest des Tages verteilt",
+            "menge_l_min": 0.5,
+            "menge_l_max": 1.0,
+            "text": "Über den Rest des Tages verteilt: 0,5 bis 1 Liter",
+        },
+    ],
+    "nach_aufstehen_l": 0.5,
+    "pro_hauptmahlzeit_l": 0.5,
+    "hauptmahlzeiten_summe_l": 1.5,
+    "training_l": 1.0,
+    "rest_des_tages_l": {"min": 0.5, "max": 1.0},
+    "summe_ruhetag_l": {"min": 2.5, "max": 3.0},
+    "summe_trainingstag_l": {"min": 3.5, "max": 4.0},
+}
+
+
+def wasser_tag() -> dict:
     return {
-        "name": meal["name"],
+        "nach_aufstehen_l": WASSER["nach_aufstehen_l"],
+        "pro_hauptmahlzeit_l": WASSER["pro_hauptmahlzeit_l"],
+        "hauptmahlzeiten": list(HAUPTMAHLZEITEN),
+        "hauptmahlzeiten_summe_l": WASSER["hauptmahlzeiten_summe_l"],
+        "training_l": WASSER["training_l"],
+        "rest_des_tages_l": dict(WASSER["rest_des_tages_l"]),
+        "summe_ruhetag_l": dict(WASSER["summe_ruhetag_l"]),
+        "summe_trainingstag_l": dict(WASSER["summe_trainingstag_l"]),
+        "ablauf": [
+            {"wann": "Direkt nach dem Aufstehen", "menge_l": 0.5},
+            {"wann": "Frühstück", "menge_l": 0.5},
+            {"wann": "Mittagessen", "menge_l": 0.5},
+            {"wann": "Abendessen", "menge_l": 0.5},
+            {"wann": "Während des Trainings", "menge_l": 1.0, "nur_am_trainingstag": True},
+            {"wann": "Rest des Tages, verteilt", "menge_l_min": 0.5, "menge_l_max": 1.0},
+        ],
+    }
+
+
+def meal_to_data(meal: dict) -> dict:
+    name = meal["name"]
+    return {
+        "name": name,
         "kcal": meal["kcal"],
         "eiweiss_g": meal["ew"],
         "zubereitung_minuten": parse_zeit_min(meal["zeit"]),
         "zeit_text": meal["zeit"],
+        "hauptmahlzeit": name in HAUPTMAHLZEITEN,
+        "wasser_l": 0.5 if name in HAUPTMAHLZEITEN else 0,
         "zutaten": [parse_food_line(item) for item in meal["items"]],
         "zubereitung": meal["zubereitung"],
     }
@@ -626,6 +696,7 @@ def plan_to_data(letter: str) -> dict:
             for k, q in PLAN_GROCERIES[letter]
         ],
         "mahlzeiten": [meal_to_data(m) for m in plan["mahlzeiten"]],
+        "wasser": wasser_tag(),
     }
 
 
@@ -651,6 +722,7 @@ def week_to_data(days: list[date]) -> dict:
                 "eiweiss_g": plan["ew"],
                 "titel": plan["titel"],
                 "mahlzeiten": [meal_to_data(m) for m in plan["mahlzeiten"]],
+                "wasser": wasser_tag(),
             }
         )
     return {
@@ -682,12 +754,14 @@ def build_plan_data() -> dict:
             "start_plan": "A",
             "hinweis": "Alle Mengen roh bzw. trocken, außer Thunfisch (abgetropft) und Brot.",
         },
+        "wasser": WASSER,
         "regeln": [
             "Küchenwaage verwenden, nicht schätzen.",
             "Öl: 5 g = 1 kleiner Teelöffel.",
             "Frei: Wasser, ungesüßter Kaffee/Tee, Gewürze, Senf, Sojasauce, Zitrone.",
             "Nicht im Plan: Säfte, extra Brot, Nüsse zwischendurch, Mayo, Fertigsaucen.",
             "Gemüse darf nach oben, nicht nach unten getauscht werden.",
+            "Wasser: 0,5 l direkt nach dem Aufstehen, 0,5 l zu jeder Hauptmahlzeit, 1 l während des Trainings, 0,5–1 l über den Rest des Tages.",
         ],
         "vorlagen": {letter: plan_to_data(letter) for letter in "ABCD"},
         "katalog": {
