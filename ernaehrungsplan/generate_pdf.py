@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import math
+from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -325,6 +327,212 @@ def plan_letter(d: date) -> str:
     return "ABCD"[(d - START).days % 4]
 
 
+def iter_weeks():
+    """Kalenderwochen Montag–Sonntag, nur Tage innerhalb des Plans."""
+    weeks: list[list[date]] = []
+    current: list[date] = []
+    key = None
+    for d in daterange(START, END):
+        iso = d.isocalendar()[:2]
+        if key is None:
+            key = iso
+        if iso != key:
+            weeks.append(current)
+            current = []
+            key = iso
+        current.append(d)
+    if current:
+        weeks.append(current)
+    return weeks
+
+
+# key -> (Kategorie, Anzeigename, Einheit)
+CATALOG = {
+    "magerquark": ("Kühlregal", "Milbona Magerquark 0,2 %", "g"),
+    "kfk": ("Kühlregal", "Körniger Frischkäse Light", "g"),
+    "skyr": ("Kühlregal", "Milbona Skyr 0,2 %", "g"),
+    "huhn": ("Kühlregal", "Hähnchenbrustfilet", "g"),
+    "hack": ("Kühlregal", "Rinderhack 5 %", "g"),
+    "pute": ("Kühlregal", "Putenbrustfilet", "g"),
+    "eier": ("Kühlregal", "Eier Größe M", "stk"),
+    "milch": ("Kühlregal", "Frischmilch 1,5 %", "ml"),
+    "pudding": ("Kühlregal", "Milbona High Protein Pudding 200 g", "becher"),
+    "drink": ("Kühlregal", "Milbona High Protein Drink 330 ml", "flasche"),
+    "hafer": ("Trockenwaren", "Crownfield Haferflocken", "g"),
+    "reis": ("Trockenwaren", "Golden Sun Basmati (trocken)", "g"),
+    "brot": ("Trockenwaren", "Vollkornbrot", "g"),
+    "wrap": ("Trockenwaren", "Weizen-Wraps", "stk"),
+    "mais": ("Trockenwaren", "Maiskonserve (abgetropft)", "g"),
+    "thunfisch": ("Trockenwaren", "Thunfisch im eigenen Saft, abgetropft", "g"),
+    "erdnuss": ("Trockenwaren", "Erdnussbutter", "g"),
+    "oel": ("Trockenwaren", "Olivenöl", "ml"),
+    "brokkoli": ("Tiefkühl", "TK-Brokkoli", "g"),
+    "gemuese": ("Tiefkühl", "TK-Gemüsemischung", "g"),
+    "beeren": ("Tiefkühl", "TK-Beerenmischung", "g"),
+    "spinat": ("Tiefkühl", "TK-Blattspinat", "g"),
+    "lachs": ("Tiefkühl", "Lachsfilet TK (Ocean Sea)", "g"),
+    "kartoffel": ("Obst / Gemüse", "Kartoffeln", "g"),
+    "banane": ("Obst / Gemüse", "Bananen", "g"),
+    "apfel": ("Obst / Gemüse", "Äpfel", "g"),
+    "paprika": ("Obst / Gemüse", "Paprika", "g"),
+    "gurke": ("Obst / Gemüse", "Gurken", "g"),
+    "tomate": ("Obst / Gemüse", "Tomaten", "g"),
+    "rucola": ("Obst / Gemüse", "Rucola", "g"),
+    "zwiebel": ("Obst / Gemüse", "Zwiebeln", "g"),
+}
+
+PLAN_GROCERIES = {
+    "A": [
+        ("hafer", 88),
+        ("magerquark", 300),
+        ("beeren", 80),
+        ("erdnuss", 5),
+        ("huhn", 180),
+        ("reis", 80),
+        ("brokkoli", 200),
+        ("oel", 10),
+        ("pudding", 1),
+        ("banane", 120),
+        ("hack", 200),
+        ("kartoffel", 250),
+        ("gemuese", 200),
+        ("kfk", 100),
+    ],
+    "B": [
+        ("eier", 3),
+        ("brot", 80),
+        ("kfk", 200),
+        ("paprika", 100),
+        ("gurke", 100),
+        ("thunfisch", 180),
+        ("reis", 70),
+        ("gemuese", 250),
+        ("mais", 90),
+        ("oel", 12),
+        ("drink", 1),
+        ("pute", 200),
+        ("kartoffel", 190),
+        ("brokkoli", 250),
+        ("skyr", 150),
+    ],
+    "C": [
+        ("hafer", 81),
+        ("magerquark", 250),
+        ("beeren", 100),
+        ("milch", 150),
+        ("banane", 100),
+        ("huhn", 200),
+        ("wrap", 1),
+        ("kfk", 80),
+        ("rucola", 50),
+        ("tomate", 100),
+        ("paprika", 80),
+        ("skyr", 200),
+        ("apfel", 180),
+        ("lachs", 180),
+        ("reis", 75),
+        ("spinat", 250),
+        ("oel", 5),
+    ],
+    "D": [
+        ("magerquark", 350),
+        ("hafer", 45),
+        ("beeren", 100),
+        ("erdnuss", 10),
+        ("eier", 2),
+        ("hack", 180),
+        ("reis", 70),
+        ("gemuese", 250),
+        ("zwiebel", 50),
+        ("oel", 10),
+        ("kfk", 200),
+        ("gurke", 150),
+        ("apfel", 150),
+        ("huhn", 180),
+        ("kartoffel", 280),
+        ("brokkoli", 200),
+    ],
+}
+
+CAT_ORDER = ["Kühlregal", "Trockenwaren", "Tiefkühl", "Obst / Gemüse"]
+
+
+def _de_int(n: int) -> str:
+    return f"{int(n):,}".replace(",", ".")
+
+
+def aggregate_week(days: list[date]) -> dict[str, float]:
+    totals: dict[str, float] = defaultdict(float)
+    for d in days:
+        for key, qty in PLAN_GROCERIES[plan_letter(d)]:
+            totals[key] += qty
+    return dict(totals)
+
+
+def shop_line(key: str, qty: float) -> str:
+    _cat, name, unit = CATALOG[key]
+    q = int(round(qty))
+    if unit == "g":
+        line = f"{name}  —  {_de_int(q)} g"
+        if key in ("magerquark", "kfk", "skyr"):
+            line += f"   ({math.ceil(q / 500)}× 500 g)"
+        elif key == "hafer":
+            line += f"   ({math.ceil(q / 500)}× 500 g)"
+        elif key == "reis":
+            line += f"   ({math.ceil(max(q, 1) / 1000)}-kg-Sack, Rest bleibt)"
+        elif key == "brot":
+            line += "   (1 Laib, Rest einfrieren)"
+        elif key == "thunfisch":
+            n = math.ceil(q / 155)
+            line += f"   ({n} Dose{'n' if n != 1 else ''})"
+        elif key == "mais":
+            n = math.ceil(q / 140)
+            line += f"   ({n} Dose{'n' if n != 1 else ''})"
+        elif key == "erdnuss":
+            line += "   (1 Glas, Vorrat)"
+        elif key in ("brokkoli", "gemuese", "beeren", "spinat"):
+            line += f"   ({math.ceil(q / 1000) or 1}× 1 kg oder passend)"
+        elif key == "lachs":
+            line += "   (400-g-Packung reicht oft)"
+        elif key == "kartoffel":
+            kg = math.ceil(q / 500) / 2
+            line += f"   (mind. {str(kg).replace('.', ',')} kg-Sack)"
+        elif key == "banane":
+            line += f"   (ca. {math.ceil(q / 120)} Stück)"
+        elif key == "apfel":
+            line += f"   (ca. {math.ceil(q / 160)} Stück)"
+        elif key == "paprika":
+            line += f"   (ca. {math.ceil(q / 150)} Stück)"
+        elif key == "gurke":
+            line += f"   (ca. {math.ceil(q / 200)} Stück)"
+        elif key == "tomate":
+            line += f"   (ca. {math.ceil(q / 100)} Stück)"
+        elif key == "zwiebel":
+            line += f"   (ca. {math.ceil(q / 80)} Stück)"
+        elif key == "rucola":
+            line += "   (1 Beutel)"
+        elif key in ("huhn", "hack", "pute"):
+            line += "   (auf Packung aufrunden)"
+        return line
+    if unit == "ml":
+        if key == "milch":
+            return f"{name}  —  {_de_int(q)} ml   (1-Liter-Packung)"
+        return f"{name}  —  {_de_int(q)} ml   (Vorrat, 1 Flasche)"
+    if unit == "stk":
+        if key == "eier":
+            packs = math.ceil(q / 10)
+            return f"{name}  —  {q} Stück   ({packs}× 10er-Pack)"
+        if key == "wrap":
+            return f"{name}  —  {q} Stück   (1 Packung, Rest einfrieren)"
+        return f"{name}  —  {q} Stück"
+    if unit == "becher":
+        return f"{name}  —  {q} Becher"
+    if unit == "flasche":
+        wort = "Flasche" if q == 1 else "Flaschen"
+        return f"{name}  —  {q} {wort}"
+    return f"{name}  —  {q}"
+
+
 def fmt_date(d: date) -> str:
     return f"{d.day:02d}. {MONTHS[d.month]} {d.year}"
 
@@ -430,11 +638,11 @@ class PlanPDF:
         self.c.setFillColor(HexColor("#D5E5DC"))
         self.c.setFont("Inter", 10)
         lines = [
-            "1. Blättere zum heutigen Datum (Lesezeichen links: Monat → Tag).",
-            "2. Iss genau die vier Mahlzeiten: Frühstück, Mittag, Snack, Abend.",
-            "3. Alle Grammzahlen mit der Küchenwaage abwiegen (roh / trocken).",
-            "4. Einkaufen nur bei Lidl. Wöchentliche Liste steht am Ende.",
-            "5. Die Tage A–B–C–D wiederholen sich bis zum 7. Januar 2027.",
+            "1. Jede Woche beginnt mit der Einkaufsliste, danach kommen die Tagesseiten.",
+            "2. Blättere links in den Lesezeichen zu Monat → Einkauf oder Datum.",
+            "3. Iss genau die vier Mahlzeiten: Frühstück, Mittag, Snack, Abend.",
+            "4. Alle Grammzahlen mit der Küchenwaage abwiegen (roh / trocken).",
+            "5. Einkaufen nur bei Lidl. Die Tage A–B–C–D wiederholen sich bis 7.1.2027.",
         ]
         for line in lines:
             self.c.drawString(MARGIN, y, line)
@@ -442,7 +650,7 @@ class PlanPDF:
 
         self.c.setFillColor(ACCENT)
         self.c.setFont("Inter-Med", 9)
-        self.c.drawString(MARGIN, 18 * mm, "143 Tage  ·  4 Mahlzeiten pro Tag  ·  Zubereitung max. 15–20 Minuten")
+        self.c.drawString(MARGIN, 18 * mm, "143 Tage  ·  21 Einkaufslisten  ·  4 Mahlzeiten pro Tag")
 
     def anleitung(self):
         self.new_page()
@@ -658,12 +866,20 @@ class PlanPDF:
 
     def tagesseiten(self):
         current_month = None
-        for d in daterange(START, END):
-            letter = plan_letter(d)
-            plan = PLANS[letter]
-            month_key = (d.year, d.month)
-            self._day_page(d, letter, plan, is_new_month=month_key != current_month)
-            current_month = month_key
+        for week in iter_weeks():
+            first = week[0]
+            month_key = (first.year, first.month)
+            new_on_list = month_key != current_month
+            if new_on_list:
+                current_month = month_key
+            self.week_einkauf(week, is_new_month=new_on_list)
+            for d in week:
+                month_key = (d.year, d.month)
+                is_new = month_key != current_month
+                if is_new:
+                    current_month = month_key
+                letter = plan_letter(d)
+                self._day_page(d, letter, PLANS[letter], is_new_month=is_new)
 
     def _day_page(self, d: date, letter: str, plan: dict, is_new_month: bool = False):
         self.new_page(f"{fmt_date_short(d)}  ·  Tag {letter}  ·  {weekday_name(d)}")
@@ -746,101 +962,112 @@ class PlanPDF:
         )
         return y - h - 3.8 * mm
 
-    def einkauf(self):
-        self.new_page("Wöchentliche Lidl-Einkaufsliste")
-        self.c.bookmarkPage("einkauf")
-        self._header_bar(
-            "Wöchentliche Lidl-Einkaufsliste",
-            "Für die Standardwoche A–B–C–D–A–B–C  (2×A, 2×B, 2×C, 1×D)",
-        )
-        cats = [
-            (
-                "Kühlregal",
-                [
-                    "Milbona Magerquark 0,2 % — 1.450 g (3× 500 g)",
-                    "Körniger Frischkäse Light — 960 g (2× 500 g)",
-                    "Milbona Skyr 0,2 % — 700 g (2× 500 g)",
-                    "Hähnchenbrustfilet — 940 g (1-kg-Packung)",
-                    "Rinderhack 5 % — 580 g",
-                    "Putenbrustfilet — 400 g",
-                    "Eier Größe M — 8 Stück (10er-Pack)",
-                    "Frischmilch 1,5 % — 300 ml (1-Liter-Packung reicht länger)",
-                    "Milbona High Protein Pudding — 2 Becher à 200 g",
-                    "Milbona High Protein Drink 330 ml — 2 Flaschen",
-                ],
-            ),
-            (
-                "Trockenwaren",
-                [
-                    "Crownfield Haferflocken — 380 g",
-                    "Golden Sun Basmati — 520 g (1-kg-Sack für 2 Wochen)",
-                    "Vollkornbrot — 160 g (1 Laib, Rest einfrieren)",
-                    "Weizen-Wraps — 2 Stück (Packung, Rest einfrieren)",
-                    "Maiskonserve — 180 g abgetropft (2 Dosen)",
-                    "Thunfisch im eigenen Saft — 360 g abgetropft (3 Dosen)",
-                    "Erdnussbutter — 20 g (1 Glas hält Wochen)",
-                    "Olivenöl — ca. 70 ml",
-                    "Gewürze, Senf, Sojasauce, Zitrone — nach Bedarf",
-                ],
-            ),
-            (
-                "Tiefkühl",
-                [
-                    "TK-Brokkoli — 1.100 g",
-                    "TK-Gemüsemischung — 1.150 g",
-                    "TK-Beerenmischung — 460 g",
-                    "TK-Blattspinat — 500 g",
-                    "Lachsfilet TK (Ocean Sea) — 360 g",
-                ],
-            ),
-            (
-                "Obst / Gemüse",
-                [
-                    "Kartoffeln — 1,2 kg (nimm 1,5–2-kg-Sack)",
-                    "Bananen — ca. 450 g (5 Stück)",
-                    "Äpfel — ca. 510 g (4 Stück)",
-                    "Paprika — 360 g (3 Stück)",
-                    "Gurke — 350 g (2 Stück)",
-                    "Tomaten — 200 g (2–3 Stück)",
-                    "Rucola — 100 g",
-                    "Zwiebeln — 300 g (für alle Pfannen)",
-                ],
-            ),
-        ]
-        y = PAGE_H - 40 * mm
-        col_w = (PAGE_W - 2 * MARGIN - 6 * mm) / 2
-        positions = [
-            (MARGIN, y),
-            (MARGIN + col_w + 6 * mm, y),
-            (MARGIN, y - 118 * mm),
-            (MARGIN + col_w + 6 * mm, y - 118 * mm),
-        ]
-        box_h = 112 * mm
-        for i, ((title, items), (x, top)) in enumerate(zip(cats, positions)):
-            self.c.setFillColor(white)
-            self.c.setStrokeColor(LINE)
-            self.c.roundRect(x, top - box_h, col_w, box_h, 5, fill=1, stroke=1)
-            self.c.setFillColor(FOREST)
-            self.c.roundRect(x, top - 11 * mm, col_w, 11 * mm, 5, fill=1, stroke=0)
-            self.c.rect(x, top - 11 * mm, col_w, 6 * mm, fill=1, stroke=0)
-            self.c.setFillColor(white)
-            self.c.setFont("Inter-Bold", 11)
-            self.c.drawString(x + 5 * mm, top - 7.5 * mm, title)
-            iy = top - 18 * mm
-            self.c.setFont("Inter", 8.2)
-            for item in items:
-                self.c.setFillColor(ACCENT)
-                self.c.circle(x + 6 * mm, iy + 1.2 * mm, 1.1 * mm, fill=1, stroke=0)
-                self.c.setFillColor(INK)
-                self._wrap_text(item, x + 10 * mm, iy, col_w - 14 * mm, 8.2, "Inter", INK)
-                iy -= 8.6 * mm
+    def week_einkauf(self, days: list[date], is_new_month: bool = False):
+        first, last = days[0], days[-1]
+        iso_year, iso_week, _wd = first.isocalendar()
+        seq = " · ".join(f"{WEEKDAYS[d.weekday()][:2]} {plan_letter(d)}" for d in days)
+        range_s = f"{fmt_date_short(first)} – {fmt_date_short(last)}"
+        self.new_page(f"Einkauf KW {iso_week}  ·  {range_s}")
+        dest = f"einkauf-{first.isoformat()}"
+        if is_new_month:
+            month_dest = f"monat-{first.year}-{first.month:02d}"
+            self.c.bookmarkPage(month_dest)
+            self.c.addOutlineEntry(f"{MONTHS[first.month]} {first.year}", month_dest, level=0)
+        self.c.bookmarkPage(dest)
+        self.c.addOutlineEntry(f"Einkaufsliste  {range_s}", dest, level=1)
 
         self.c.setFillColor(FOREST)
-        self.c.setFont("Inter-Semi", 8.5)
+        self.c.rect(0, PAGE_H - 34 * mm, PAGE_W, 34 * mm, fill=1, stroke=0)
+        self.c.setFillColor(ACCENT)
+        self.c.rect(0, PAGE_H - 35.4 * mm, PAGE_W, 1.6 * mm, fill=1, stroke=0)
+        self.c.setFillColor(HexColor("#E8D9A8"))
+        self.c.setFont("Inter-Med", 9)
+        self.c.drawString(MARGIN, PAGE_H - 10 * mm, f"KALENDERWOCHE {iso_week}  ·  {iso_year}")
+        self.c.setFillColor(white)
+        self.c.setFont("Inter-Bold", 18)
+        self.c.drawString(MARGIN, PAGE_H - 19.5 * mm, "Einkaufsliste Lidl")
+        self.c.setFont("Inter", 8.5)
+        self.c.setFillColor(HexColor("#D5E5DC"))
+        n = len(days)
+        tage = "Tag" if n == 1 else "Tage"
+        self.c.drawString(MARGIN, PAGE_H - 28 * mm, f"{range_s}   ·   {n} {tage}   ·   {seq}")
+
+        totals = aggregate_week(days)
+        grouped: dict[str, list[tuple[str, float]]] = {c: [] for c in CAT_ORDER}
+        for key, qty in totals.items():
+            grouped[CATALOG[key][0]].append((key, qty))
+        for cat in CAT_ORDER:
+            grouped[cat].sort(key=lambda kv: CATALOG[kv[0]][1])
+
+        y = PAGE_H - 42 * mm
+        col_w = (PAGE_W - 2 * MARGIN - 5 * mm) / 2
+        line_h = 7.2 * mm
+        header_h = 10 * mm
+        cols = [
+            (MARGIN, CAT_ORDER[0], CAT_ORDER[2]),
+            (MARGIN + col_w + 5 * mm, CAT_ORDER[1], CAT_ORDER[3]),
+        ]
+        col_bottoms = []
+        for x, cat_top, cat_bot in cols:
+            cy = y
+            for cat in (cat_top, cat_bot):
+                items = grouped[cat]
+                extra = 0
+                for key, qty in items:
+                    text = shop_line(key, qty)
+                    if self.c.stringWidth(text, "Inter", 7.3) > col_w - 14 * mm:
+                        extra += 3.0 * mm
+                h = header_h + 5 * mm + max(len(items), 1) * line_h + extra
+                self.c.setFillColor(white)
+                self.c.setStrokeColor(LINE)
+                self.c.setLineWidth(0.7)
+                self.c.roundRect(x, cy - h, col_w, h, 5, fill=1, stroke=1)
+                self.c.setFillColor(FOREST)
+                self.c.roundRect(x, cy - header_h, col_w, header_h, 5, fill=1, stroke=0)
+                self.c.rect(x, cy - header_h, col_w, 5 * mm, fill=1, stroke=0)
+                self.c.setFillColor(white)
+                self.c.setFont("Inter-Bold", 10.5)
+                self.c.drawString(x + 4.5 * mm, cy - 7 * mm, cat)
+                self.c.setFont("Inter", 8)
+                self.c.drawRightString(x + col_w - 4 * mm, cy - 7 * mm, str(len(items)))
+                iy = cy - header_h - 6.2 * mm
+                if not items:
+                    self.c.setFillColor(MUTED)
+                    self.c.setFont("Inter", 8)
+                    self.c.drawString(x + 10 * mm, iy, "nichts diese Woche")
+                for key, qty in items:
+                    self.c.setStrokeColor(FOREST)
+                    self.c.setLineWidth(0.8)
+                    self.c.setFillColor(white)
+                    self.c.roundRect(x + 4 * mm, iy - 0.3 * mm, 3.1 * mm, 3.1 * mm, 0.5, fill=1, stroke=1)
+                    self.c.setFillColor(INK)
+                    self.c.setFont("Inter", 7.3)
+                    text = shop_line(key, qty)
+                    max_w = col_w - 14 * mm
+                    if self.c.stringWidth(text, "Inter", 7.3) <= max_w:
+                        self.c.drawString(x + 9.4 * mm, iy, text)
+                        iy -= line_h
+                    elif "  —  " in text:
+                        left, right = text.split("  —  ", 1)
+                        self.c.drawString(x + 9.4 * mm, iy, left)
+                        self.c.setFillColor(MUTED)
+                        self.c.drawString(x + 9.4 * mm, iy - 3.1 * mm, right)
+                        self.c.setFillColor(INK)
+                        iy -= line_h + 2.6 * mm
+                    else:
+                        self.c.drawString(x + 9.4 * mm, iy, text[:52] + "…")
+                        iy -= line_h
+                cy = cy - h - 3.5 * mm
+            col_bottoms.append(cy)
+
+        self.c.setFillColor(HexColor("#EFEAE2"))
+        self.c.roundRect(MARGIN, 15 * mm, PAGE_W - 2 * MARGIN, 12 * mm, 3, fill=1, stroke=0)
+        self.c.setFillColor(MUTED)
+        self.c.setFont("Inter", 7.6)
         self.c.drawString(
-            MARGIN,
-            18 * mm,
-            "Grundvorrat alle 3–4 Wochen: Hafer 1 kg, Basmati 2 kg, Öl, Erdnussbutter, Gewürze.",
+            MARGIN + 4 * mm,
+            19.5 * mm,
+            "Kästchen im Laden abhaken. Gewürze, Senf, Sojasauce, Zitrone: nur nachkaufen wenn leer. Mengen = Verzehr, Packung aufrunden.",
         )
 
     def save(self):
@@ -862,9 +1089,6 @@ def main():
     pdf.c.addOutlineEntry("Monatsübersicht", "monate", level=0)
 
     pdf.tagesseiten()
-
-    pdf.einkauf()
-    pdf.c.addOutlineEntry("Einkaufsliste", "einkauf", level=0)
 
     pdf.save()
     print(f"PDF geschrieben: {out}")
