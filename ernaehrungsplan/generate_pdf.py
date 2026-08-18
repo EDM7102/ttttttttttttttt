@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+import re
 from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
@@ -545,6 +547,165 @@ def weekday_name(d: date) -> str:
     return WEEKDAYS[d.weekday()]
 
 
+def parse_food_line(line: str) -> dict:
+    patterns = [
+        (r"^(\d+)\s+g\s+(.+)$", "g"),
+        (r"^(\d+)\s+ml\s+(.+)$", "ml"),
+        (r"^(\d+)\s+Eier\s+(.+)$", "stk"),
+        (r"^(\d+)\s+Becher\s+(.+)$", "becher"),
+        (r"^(\d+)\s+Flasche\s+(.+)$", "flasche"),
+        (r"^(\d+)\s+Weizen-Wrap\s*(.*)$", "stk"),
+    ]
+    for pat, einheit in patterns:
+        m = re.match(pat, line)
+        if m:
+            produkt = m.group(2).strip() if m.lastindex >= 2 else ""
+            if einheit == "stk" and line.startswith(m.group(1) + " Eier"):
+                produkt = f"Eier {produkt}"
+            elif einheit == "stk" and "Wrap" in line:
+                produkt = ("Weizen-Wrap " + produkt).strip()
+            return {
+                "menge": int(m.group(1)),
+                "einheit": einheit,
+                "produkt": produkt,
+                "text": line,
+            }
+    return {"menge": None, "einheit": None, "produkt": line, "text": line}
+
+
+def parse_zeit_min(zeit: str) -> int:
+    m = re.search(r"(\d+)", zeit or "")
+    return int(m.group(1)) if m else 0
+
+
+def shop_item(key: str, qty: float) -> dict:
+    cat, name, unit = CATALOG[key]
+    q = int(round(qty))
+    line = shop_line(key, qty)
+    hinweis = None
+    if "   (" in line and line.endswith(")"):
+        hinweis = line[line.rfind("(") + 1 : -1]
+    return {
+        "id": key,
+        "kategorie": cat,
+        "produkt": name,
+        "menge": q,
+        "einheit": unit,
+        "hinweis": hinweis,
+        "text": line,
+    }
+
+
+def meal_to_data(meal: dict) -> dict:
+    return {
+        "name": meal["name"],
+        "kcal": meal["kcal"],
+        "eiweiss_g": meal["ew"],
+        "zubereitung_minuten": parse_zeit_min(meal["zeit"]),
+        "zeit_text": meal["zeit"],
+        "zutaten": [parse_food_line(item) for item in meal["items"]],
+        "zubereitung": meal["zubereitung"],
+    }
+
+
+def plan_to_data(letter: str) -> dict:
+    plan = PLANS[letter]
+    return {
+        "plan": letter,
+        "titel": plan["titel"],
+        "kcal": plan["kcal"],
+        "eiweiss_g": plan["ew"],
+        "einkauf_tag": [
+            {
+                "id": k,
+                "produkt": CATALOG[k][1],
+                "kategorie": CATALOG[k][0],
+                "menge": q,
+                "einheit": CATALOG[k][2],
+            }
+            for k, q in PLAN_GROCERIES[letter]
+        ],
+        "mahlzeiten": [meal_to_data(m) for m in plan["mahlzeiten"]],
+    }
+
+
+def week_to_data(days: list[date]) -> dict:
+    first, last = days[0], days[-1]
+    iso_year, iso_week, _wd = first.isocalendar()
+    totals = aggregate_week(days)
+    einkauf = {cat: [] for cat in CAT_ORDER}
+    for key, qty in sorted(totals.items(), key=lambda kv: CATALOG[kv[0]][1]):
+        item = shop_item(key, qty)
+        einkauf[item["kategorie"]].append(item)
+    tage = []
+    for d in days:
+        letter = plan_letter(d)
+        plan = PLANS[letter]
+        tage.append(
+            {
+                "datum": d.isoformat(),
+                "datum_de": fmt_date_short(d),
+                "wochentag": weekday_name(d),
+                "plan": letter,
+                "kcal": plan["kcal"],
+                "eiweiss_g": plan["ew"],
+                "titel": plan["titel"],
+                "mahlzeiten": [meal_to_data(m) for m in plan["mahlzeiten"]],
+            }
+        )
+    return {
+        "kalenderwoche": iso_week,
+        "jahr": iso_year,
+        "von": first.isoformat(),
+        "bis": last.isoformat(),
+        "von_de": fmt_date_short(first),
+        "bis_de": fmt_date_short(last),
+        "tage_anzahl": len(days),
+        "planfolge": [plan_letter(d) for d in days],
+        "einkauf": einkauf,
+        "tage": tage,
+    }
+
+
+def build_plan_data() -> dict:
+    return {
+        "meta": {
+            "titel": "Ernährungsplan Body Recomposition",
+            "von": START.isoformat(),
+            "bis": END.isoformat(),
+            "tage_anzahl": (END - START).days + 1,
+            "kcal_soll": 2100,
+            "protein_min_g": 180,
+            "koerper": {"gewicht_kg": 90, "groesse_cm": 180, "alter_jahre": 25, "ziel": "Fettabbau und Muskelaufbau"},
+            "supermarkt": "Lidl",
+            "rotation": ["A", "B", "C", "D"],
+            "start_plan": "A",
+            "hinweis": "Alle Mengen roh bzw. trocken, außer Thunfisch (abgetropft) und Brot.",
+        },
+        "regeln": [
+            "Küchenwaage verwenden, nicht schätzen.",
+            "Öl: 5 g = 1 kleiner Teelöffel.",
+            "Frei: Wasser, ungesüßter Kaffee/Tee, Gewürze, Senf, Sojasauce, Zitrone.",
+            "Nicht im Plan: Säfte, extra Brot, Nüsse zwischendurch, Mayo, Fertigsaucen.",
+            "Gemüse darf nach oben, nicht nach unten getauscht werden.",
+        ],
+        "vorlagen": {letter: plan_to_data(letter) for letter in "ABCD"},
+        "katalog": {
+            key: {"kategorie": cat, "produkt": name, "einheit": unit}
+            for key, (cat, name, unit) in CATALOG.items()
+        },
+        "wochen": [week_to_data(days) for days in iter_weeks()],
+    }
+
+
+def write_plan_json(path: Path) -> None:
+    data = build_plan_data()
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    wochen = len(data["wochen"])
+    tage = sum(w["tage_anzahl"] for w in data["wochen"])
+    print(f"JSON geschrieben: {path}  ({wochen} Wochen, {tage} Tage)")
+
+
 class PlanPDF:
     def __init__(self, path: Path):
         self.path = path
@@ -1075,7 +1236,11 @@ class PlanPDF:
 
 
 def main():
-    out = Path(__file__).resolve().parent / "Ernaehrungsplan_18-08-2026_bis_07-01-2027.pdf"
+    here = Path(__file__).resolve().parent
+    json_out = here / "ernaehrungsplan.json"
+    write_plan_json(json_out)
+
+    out = here / "Ernaehrungsplan_18-08-2026_bis_07-01-2027.pdf"
     pdf = PlanPDF(out)
     pdf.cover()
     pdf.c.addOutlineEntry("Deckblatt", "cover", level=0)
